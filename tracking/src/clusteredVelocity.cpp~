@@ -1,0 +1,140 @@
+#include "ros/ros.h"
+#include <stdio.h>
+#include <vector>
+#include <iostream>
+#include <string> 
+#include <stack>
+#include <math.h>
+
+#include "/home/sedrica/catkin_ws/devel/include/tracking/customOccupancy.h"
+#include "nav_msgs/OccupancyGrid.h"
+#include "std_msgs/Int8MultiArray.h"
+#include "std_msgs/Float64MultiArray.h"
+#include "nav_msgs/GetMap.h"
+#include "tf/transform_listener.h"
+#include "tf/transform_broadcaster.h"
+#include "message_filters/subscriber.h"
+#include "tf/message_filter.h"
+#include "ros/console.h"
+#include "nav_msgs/MapMetaData.h"
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/highgui/highgui.hpp>
+
+using namespace std;
+using namespace cv;
+
+
+void findCluster(vector<bool>& isVisited, vector<pair<int, int> >& cluster, std_msgs::Int8MultiArray& map, int x, int y, int height, int width) {
+  stack<pair<int, int> > s;
+  s.push(pair<int, int>(x, y));
+
+  while (!s.empty()) {
+    pair<int, int> top = s.top();
+    s.pop();
+
+    if (top.first < 0 || top.first >= width) continue;
+    if (top.second < 0 || top.second >= height) continue;
+    if (isVisited[top.second * width + top.first]) continue;
+    if (map.data[top.second * width + top.first] == 0) continue;
+
+    cluster.push_back(top);
+    isVisited[top.second * width + top.first] = true;
+
+    int xRadius = 10;
+    int yRadius = 10;
+    for (int i = 0; i <= xRadius; ++i) {
+    	for (int j = 0; j <= yRadius; ++j) {
+    		if (x || y) {
+	    		s.push(pair<int, int>(top.first + i, top.second + j));
+	    		s.push(pair<int, int>(top.first + i, top.second - j));
+	    		s.push(pair<int, int>(top.first + i, top.second + j));
+	    		s.push(pair<int, int>(top.first - i, top.second + j));
+	    	}
+    	}
+    }
+
+    // s.push(pair<int, int>(top.first - 1, top.second));
+    // s.push(pair<int, int>(top.first + 1, top.second));
+    // s.push(pair<int, int>(top.first, top.second + 1));
+    // s.push(pair<int, int>(top.first, top.second - 1));
+    // s.push(pair<int, int>(top.first + 1, top.second - 1));
+    // s.push(pair<int, int>(top.first - 1, top.second - 1));
+    // s.push(pair<int, int>(top.first - 1, top.second + 1));
+    // s.push(pair<int, int>(top.first + 1, top.second + 1));
+  }
+}
+
+
+vector<vector<pair<int, int> > > clusterize(std_msgs::Int8MultiArray& map, int height, int width) {
+  vector<bool> isVisited(map.data.size(), false);
+  vector<vector<pair<int, int> > > clusters;
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      int idx = y * width + x;
+      if (!isVisited[idx] && map.data[y * width + x] > 0) {
+        vector<pair<int, int> > cluster;
+        findCluster(isVisited, cluster, map, x, y, height, width);
+        clusters.push_back(cluster);
+      }
+    }
+  }
+  return clusters;
+}
+
+
+void lidarCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg)
+{
+    std_msgs::Int8MultiArray map;
+    int height = msg->info.height;
+    int width = msg->info.width;
+    cout<<msg->data[0]<<endl;
+    map.data = msg->data;
+    // for(int i=0; i<height; i++){
+    // 	for (int j = 0; j < width; ++j)
+    // 	{
+    // 		cout<<msg->data[i*width+j]<<endl;
+    // 		map.data.push_back(msg->data[i*width+j]);
+    // 	}
+    // }
+
+	Mat clusterImg = Mat::zeros(800, 800, CV_8UC3);
+    vector<vector<pair<int, int> > > new_cluster = clusterize(map , height , width);
+
+    for (int i = 0; i < new_cluster.size(); ++i) {
+    	for (int j = 0; j < new_cluster[i].size(); ++j) {
+    		pair<int, int> p = new_cluster[i][j];
+    		clusterImg.at<Vec3b>(p.second, p.first)[0] = map.data[p.second*width + p.first] * ((i * 20) % 255);
+	 		clusterImg.at<Vec3b>(p.second, p.first)[1] = map.data[p.second*width + p.first] * ((i * 60) % 255);
+	 		clusterImg.at<Vec3b>(p.second, p.first)[2] = map.data[p.second*width + p.first] * ((i * 100) % 255);
+    	}
+    }
+	 namedWindow("ClusteredGrid", CV_WINDOW_AUTOSIZE);
+    imshow("clusteredGrid", clusterImg);
+    cout<<"hey"<<endl;
+}
+
+
+int main(int argc, char **argv)
+{
+	ros::init(argc, argv, "cluster");
+	
+	// ros::NodeHandle n;
+	ros::NodeHandle nh2;
+	ros::Rate loop_rate(25); 
+
+	 // namedWindow("ClusteredGrid", CV_WINDOW_NORMAL);
+	 // createTrackbar("xRadius","ClusteredGrid",&xRadius,15,lidarCallback);
+    
+	ros::Subscriber map_sub= nh2.subscribe("/scan/OccGrdfull", 1000, lidarCallback);
+	// pub = n.advertise<nav_msgs::OccupancyGrid>("/scan/OccGrd", 1);
+	// pub = n.advertise<tracking::customOccupancy>("/scan/OccGrd", 1);
+
+	while(ros::ok())
+	{
+		ros::spinOnce();
+		loop_rate.sleep();
+	}
+	return 0;
+}
